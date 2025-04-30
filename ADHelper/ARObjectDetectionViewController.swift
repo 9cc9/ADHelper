@@ -220,67 +220,62 @@ class ARObjectDetectionViewController: UIViewController {
     private func addLabel(for objectName: String, confidence: Float, at boundingBox: CGRect) {
         print("正在为物体 '\(objectName)' 创建标签")
         
+        // 验证文本内容
+        guard !objectName.isEmpty else {
+            print("错误：物体名称为空")
+            return
+        }
+        
         // 创建标签节点
         let labelNode = SCNNode()
         
         // 创建背景板
-        let backgroundGeometry = SCNPlane(width: 0.2, height: 0.05)
+        let backgroundGeometry = SCNPlane(width: 0.12, height: 0.06) // 增大背景板尺寸
         let backgroundMaterial = SCNMaterial()
         backgroundMaterial.diffuse.contents = UIColor.black.withAlphaComponent(0.7)
         backgroundGeometry.materials = [backgroundMaterial]
         let backgroundNode = SCNNode(geometry: backgroundGeometry)
         labelNode.addChildNode(backgroundNode)
         
-        // 创建文本
-        let confidenceString = String(format: "%.1f%%", confidence * 100)
-        let text = SCNText(string: "\(objectName)", extrusionDepth: 0.001)
-        text.font = UIFont.systemFont(ofSize: 0.03)
-        text.firstMaterial?.diffuse.contents = UIColor.white
-        text.firstMaterial?.isDoubleSided = true
-        text.alignmentMode = CATextLayerAlignmentMode.center.rawValue
-        text.truncationMode = CATextLayerTruncationMode.end.rawValue
+        // 创建物体名称文本
+        let displayName = getDisplayName(for: objectName)
+        print("处理后的显示文本: '\(displayName)'")
+        let nameText = createSafeText(displayName, size: 24)
         
-        let textNode = SCNNode(geometry: text)
-        // 调整文本位置使其居中
-        let (min, max) = text.boundingBox
-        let textWidth = max.x - min.x
-        textNode.position = SCNVector3(-textWidth/2, -0.01, 0.001)
-        labelNode.addChildNode(textNode)
+        guard let nameNode = createTextNode(from: nameText) else {
+            print("错误：无法创建名称文本节点")
+            return
+        }
+        nameNode.position.y = 0.01 // 调整位置
+        labelNode.addChildNode(nameNode)
         
         // 创建置信度文本
-        let confidenceText = SCNText(string: confidenceString, extrusionDepth: 0.001)
-        confidenceText.font = UIFont.systemFont(ofSize: 0.02)
-        confidenceText.firstMaterial?.diffuse.contents = UIColor.lightGray
-        confidenceText.firstMaterial?.isDoubleSided = true
-        
-        let confidenceNode = SCNNode(geometry: confidenceText)
-        let (minConf, maxConf) = confidenceText.boundingBox
-        let confidenceWidth = maxConf.x - minConf.x
-        confidenceNode.position = SCNVector3(-confidenceWidth/2, -0.03, 0.001)
-        labelNode.addChildNode(confidenceNode)
+        let confidenceString = String(format: "%.1f%%", confidence * 100)
+        if let confidenceNode = createConfidenceNode(confidenceString) {
+            confidenceNode.position.y = -0.01 // 调整位置
+            labelNode.addChildNode(confidenceNode)
+        }
         
         // 获取屏幕中心点
         let screenCenter = CGPoint(x: boundingBox.midX * sceneView.bounds.width,
                                  y: boundingBox.midY * sceneView.bounds.height)
         
         // 进行射线检测
-        let hitTestResults = sceneView.hitTest(screenCenter, types: [.featurePoint, .estimatedHorizontalPlane])
+        var hitTestResults = sceneView.hitTest(screenCenter, types: [.featurePoint])
+        if hitTestResults.isEmpty {
+            hitTestResults = sceneView.hitTest(screenCenter, types: [.estimatedHorizontalPlane])
+        }
         
         if let hitResult = hitTestResults.first {
-            // 设置标签位置
             let position = SCNVector3(
                 hitResult.worldTransform.columns.3.x,
-                hitResult.worldTransform.columns.3.y + 0.05, // 稍微上浮一点
+                hitResult.worldTransform.columns.3.y + 0.05,
                 hitResult.worldTransform.columns.3.z
             )
             labelNode.position = position
             
             // 添加浮动动画
-            let floatAnimation = SCNAction.sequence([
-                SCNAction.moveBy(x: 0, y: 0.01, z: 0, duration: 1.0),
-                SCNAction.moveBy(x: 0, y: -0.01, z: 0, duration: 1.0)
-            ])
-            labelNode.runAction(SCNAction.repeatForever(floatAnimation))
+            addFloatingAnimation(to: labelNode)
             
             // 始终面向相机
             let billboardConstraint = SCNBillboardConstraint()
@@ -298,6 +293,149 @@ class ARObjectDetectionViewController: UIViewController {
         } else {
             print("未能找到合适的位置放置标签")
         }
+    }
+    
+    private func getDisplayName(for identifier: String) -> String {
+        // 处理原始标识符
+        let processedName = identifier
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+        
+        // 扩展翻译字典
+        let translations = [
+            "structure": "结构",
+            "wood": "木材",
+            "processed": "加工",
+            "wood processed": "加工木材",
+            "table": "桌子",
+            "chair": "椅子",
+            "desk": "书桌",
+            "cabinet": "柜子",
+            "shelf": "架子",
+            "door": "门",
+            "window": "窗户",
+            "floor": "地板",
+            "wall": "墙壁",
+            "ceiling": "天花板",
+            "light": "灯",
+            "lamp": "台灯",
+            "computer": "电脑",
+            "monitor": "显示器",
+            "keyboard": "键盘",
+            "mouse": "鼠标",
+            "phone": "手机",
+            "book": "书本",
+            "paper": "纸张",
+            "pen": "笔",
+            "cup": "水杯",
+            "bottle": "瓶子",
+            "glass": "玻璃杯",
+            "plate": "盘子",
+            "bowl": "碗",
+            "furniture": "家具",
+            "electronic": "电子设备",
+            "device": "设备",
+            "metal": "金属",
+            "plastic": "塑料",
+            "wooden": "木制",
+            "steel": "钢制",
+            "aluminum": "铝制"
+        ]
+        
+        // 尝试直接匹配
+        if let translation = translations[processedName.lowercased()] {
+            return translation
+        }
+        
+        // 如果是复合词，尝试翻译各个部分
+        let words = processedName.lowercased().split(separator: " ")
+        let translatedWords = words.map { word -> String in
+            if let translation = translations[String(word)] {
+                return translation
+            }
+            return String(word)
+        }
+        
+        let result = translatedWords.joined(separator: "")
+        print("翻译结果: '\(processedName)' -> '\(result)'")
+        return result
+    }
+    
+    private func createSafeText(_ string: String, size: CGFloat) -> SCNText {
+        // 确保字符串不为空
+        let safeString = string.isEmpty ? "未知物体" : string
+        
+        // 创建2D文本来预计算尺寸
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: size, weight: .medium)
+        ]
+        let textSize = (safeString as NSString).size(withAttributes: attributes)
+        
+        // 创建文本几何体
+        let text = SCNText(string: safeString, extrusionDepth: 0.01)
+        
+        // 设置字体
+        text.font = UIFont.systemFont(ofSize: size, weight: .medium)
+        
+        // 设置文本属性
+        text.flatness = 0.2
+        text.chamferRadius = 0.0
+        
+        // 确保文本有合适的容器大小
+        text.containerFrame = CGRect(x: 0, y: 0, width: max(textSize.width, 1), height: max(textSize.height, 1))
+        
+        // 设置材质
+        let material = SCNMaterial()
+        material.diffuse.contents = UIColor.white
+        material.isDoubleSided = true
+        text.materials = [material]
+        
+        return text
+    }
+    
+    private func createTextNode(from text: SCNText) -> SCNNode? {
+        let textNode = SCNNode(geometry: text)
+        
+        // 使用文本的容器框架计算尺寸
+        let width = CGFloat(text.containerFrame.width)
+        let height = CGFloat(text.containerFrame.height)
+        
+        // 验证尺寸
+        guard width > 0, height > 0 else {
+            print("错误：文本尺寸无效 - 宽度: \(width), 高度: \(height)")
+            return nil
+        }
+        
+        // 调整位置和缩放
+        let scale: Float = 0.0003
+        textNode.scale = SCNVector3(scale, scale, scale)
+        textNode.position = SCNVector3(-Float(width) * scale / 2, 0, 0.001)
+        
+        return textNode
+    }
+    
+    private func createConfidenceNode(_ confidenceString: String) -> SCNNode? {
+        let confidenceText = createSafeText(confidenceString, size: 40) // 增大字体大小
+        let material = SCNMaterial()
+        material.diffuse.contents = UIColor.lightGray
+        material.isDoubleSided = true
+        confidenceText.materials = [material]
+        
+        guard let confidenceNode = createTextNode(from: confidenceText) else {
+            print("错误：无法创建置信度节点")
+            return nil
+        }
+        
+        confidenceNode.position.y = -0.02
+        return confidenceNode
+    }
+    
+    private func addFloatingAnimation(to node: SCNNode) {
+        let floatAnimation = SCNAction.sequence([
+            SCNAction.moveBy(x: 0, y: 0.005, z: 0, duration: 1.0),
+            SCNAction.moveBy(x: 0, y: -0.005, z: 0, duration: 1.0)
+        ])
+        node.runAction(SCNAction.repeatForever(floatAnimation))
     }
 }
 
