@@ -12,6 +12,8 @@ class ARObjectDetectionViewController: UIViewController {
     private var lastProcessedTime: TimeInterval = 0
     private let processingInterval: TimeInterval = 0.5 // 每0.5秒处理一次
     private var isProcessing = false
+    private var lastCameraPosition: simd_float4? = nil
+    private let minCameraMoveDistance: Float = 0.05 // 5厘米
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -152,21 +154,36 @@ class ARObjectDetectionViewController: UIViewController {
             if let results = request.results as? [VNClassificationObservation] {
                 print("获取到 \(results.count) 个识别结果")
                 
-                // 打印所有结果，包括低置信度的
-                results.forEach { result in
+                // 只打印置信度大于等于50%的结果
+                results.filter { $0.confidence >= 0.5 }.forEach { result in
                     print("识别到物体: \(result.identifier), 置信度: \(String(format: "%.2f%%", result.confidence * 100))")
                 }
                 
                 // 只处理置信度大于50%的结果
                 let highConfidenceResults = results.filter { $0.confidence > 0.5 }
                 print("置信度大于50%的结果数量: \(highConfidenceResults.count)")
+
+                // 针对同一物体，只保留置信度最高的结果
+                var bestResults: [String: VNClassificationObservation] = [:]
+                for result in highConfidenceResults {
+                    let key = result.identifier
+                    if let existing = bestResults[key] {
+                        if result.confidence > existing.confidence {
+                            bestResults[key] = result
+                        }
+                    } else {
+                        bestResults[key] = result
+                    }
+                }
+                let finalResults = Array(bestResults.values)
+                print("最终用于展示的唯一物体数量: \(finalResults.count)")
                 
                 // 清除所有现有标签
                 self.detectedObjectAnnotations.values.forEach { $0.removeFromParentNode() }
                 self.detectedObjectAnnotations.removeAll()
                 
-                // 为每个识别结果添加标签
-                for (index, result) in highConfidenceResults.enumerated() {
+                // 为每个唯一物体添加标签
+                for (index, result) in finalResults.enumerated() {
                     let chineseLabel = self.getChineseLabel(for: result.identifier)
                     print("处理识别结果 \(index + 1): \(chineseLabel)")
                     
@@ -490,30 +507,43 @@ extension ARObjectDetectionViewController: ARSessionDelegate {
     
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         let currentTime = CACurrentMediaTime()
-        
+        print("[LOG] didUpdate frame, time: \(currentTime)")
+        // 检查相机移动距离
+        let cameraPosition = frame.camera.transform.columns.3
+        if let last = lastCameraPosition {
+            let dx = cameraPosition.x - last.x
+            let dy = cameraPosition.y - last.y
+            let dz = cameraPosition.z - last.z
+            let distance = sqrt(dx*dx + dy*dy + dz*dz)
+            if distance < minCameraMoveDistance {
+                print("[LOG] 相机移动距离 \(distance)，小于阈值 \(minCameraMoveDistance)，跳过标签刷新")
+                return
+            }
+        }
+        lastCameraPosition = cameraPosition
         // 避免重复处理和过于频繁的处理
-        guard !isProcessing && currentTime - lastProcessedTime > processingInterval else { return }
-        
+        guard !isProcessing && currentTime - lastProcessedTime > processingInterval else {
+            print("[LOG] 跳过本帧处理 isProcessing=\(isProcessing)")
+            return
+        }
         isProcessing = true
         lastProcessedTime = currentTime
-        
         let pixelBuffer = frame.capturedImage
-        
         // 确保图像质量
         guard frame.camera.trackingState == .normal else {
+            print("[LOG] 相机跟踪状态异常: \(frame.camera.trackingState)")
             isProcessing = false
             return
         }
-        
+        print("[LOG] 开始Vision识别请求")
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer,
                                           orientation: .up,
                                           options: [:])
-        
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
                 try handler.perform(self?.visionRequests ?? [])
             } catch {
-                print("图像处理错误: \(error)")
+                print("[ERROR] 图像处理错误: \(error)")
             }
             self?.isProcessing = false
         }
