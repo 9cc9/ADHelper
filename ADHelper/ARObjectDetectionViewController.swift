@@ -184,7 +184,7 @@ class ARObjectDetectionViewController: UIViewController {
                 
                 // 为每个唯一物体添加标签
                 for (index, result) in finalResults.enumerated() {
-                    let chineseLabel = self.getChineseLabel(for: result.identifier)
+                    let chineseLabel = result.identifier
                     print("处理识别结果 \(index + 1): \(chineseLabel)")
                     
                     // 计算标签位置
@@ -201,41 +201,8 @@ class ARObjectDetectionViewController: UIViewController {
         }
     }
     
-    private func getChineseLabel(for identifier: String) -> String {
-        // 扩展的中英文转换字典
-        let translations = [
-            "cup": "水杯",
-            "bottle": "瓶子",
-            "medicine": "药品",
-            "pill bottle": "药瓶",
-            "photo": "照片",
-            "picture": "图片",
-            "book": "书本",
-            "phone": "手机",
-            "computer": "电脑",
-            "glasses": "眼镜",
-            "medication": "药物",
-            "tablet": "平板电脑",
-            "remote": "遥控器",
-            "key": "钥匙",
-            "wallet": "钱包",
-            "chair": "椅子",
-            "table": "桌子",
-            "lamp": "台灯",
-            "clock": "时钟",
-            "watch": "手表"
-        ]
-        
-        // 处理复合词，如"pill_bottle"或"pill.bottle"
-        let processedIdentifier = identifier.lowercased()
-            .replacingOccurrences(of: "_", with: " ")
-            .replacingOccurrences(of: ".", with: " ")
-        
-        return translations[processedIdentifier] ?? identifier
-    }
-    
     private func addLabel(for objectName: String, confidence: Float, at boundingBox: CGRect) {
-        print("正在为物体 '\(objectName)' 创建标签")
+        print("addLabel: objectName = '\(objectName)'，confidence = \(confidence)")
         
         // 验证文本内容
         guard !objectName.isEmpty else {
@@ -379,17 +346,17 @@ class ARObjectDetectionViewController: UIViewController {
     }
     
     private func createSafeText(_ string: String, size: CGFloat) -> SCNText {
-        // 确保字符串不为空
-        let safeString = string.isEmpty ? "未知物体" : string
+        let safeString = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayString = safeString.isEmpty ? "未知物体" : safeString
         
         // 创建2D文本来预计算尺寸
         let attributes: [NSAttributedString.Key: Any] = [
             .font: UIFont.systemFont(ofSize: size, weight: .medium)
         ]
-        let textSize = (safeString as NSString).size(withAttributes: attributes)
+        let textSize = (displayString as NSString).size(withAttributes: attributes)
         
         // 创建文本几何体
-        let text = SCNText(string: safeString, extrusionDepth: 0.01)
+        let text = SCNText(string: displayString, extrusionDepth: 0.01)
         
         // 设置字体
         text.font = UIFont.systemFont(ofSize: size, weight: .medium)
@@ -507,7 +474,7 @@ extension ARObjectDetectionViewController: ARSessionDelegate {
     
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         let currentTime = CACurrentMediaTime()
-        print("[LOG] didUpdate frame, time: \(currentTime)")
+        // print("[LOG] didUpdate frame, time: \(currentTime)")
         // 检查相机移动距离
         let cameraPosition = frame.camera.transform.columns.3
         if let last = lastCameraPosition {
@@ -516,7 +483,7 @@ extension ARObjectDetectionViewController: ARSessionDelegate {
             let dz = cameraPosition.z - last.z
             let distance = sqrt(dx*dx + dy*dy + dz*dz)
             if distance < minCameraMoveDistance {
-                print("[LOG] 相机移动距离 \(distance)，小于阈值 \(minCameraMoveDistance)，跳过标签刷新")
+                // print("[LOG] 相机移动距离 \(distance)，小于阈值 \(minCameraMoveDistance)，跳过标签刷新")
                 return
             }
         }
