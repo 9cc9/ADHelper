@@ -20,6 +20,8 @@ class ARObjectDetectionViewController: UIViewController {
         setupAR()
         setupVision()
         setupUI()
+        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+        sceneView.addGestureRecognizer(tapGesture)
     }
     
     override func viewWillAppear(_ animated: Bool) {
@@ -203,53 +205,40 @@ class ARObjectDetectionViewController: UIViewController {
     
     private func addLabel(for objectName: String, confidence: Float, at boundingBox: CGRect) {
         print("addLabel: objectName = '\(objectName)'，confidence = \(confidence)")
-        
-        // 验证文本内容
         guard !objectName.isEmpty else {
             print("错误：物体名称为空")
             return
         }
-        
-        // 创建标签节点
         let labelNode = SCNNode()
-        
-        // 创建背景板
-        let backgroundGeometry = SCNPlane(width: 0.12, height: 0.06) // 增大背景板尺寸
+        let backgroundGeometry = SCNPlane(width: 0.12, height: 0.06)
         let backgroundMaterial = SCNMaterial()
         backgroundMaterial.diffuse.contents = UIColor.black.withAlphaComponent(0.7)
         backgroundGeometry.materials = [backgroundMaterial]
         let backgroundNode = SCNNode(geometry: backgroundGeometry)
         labelNode.addChildNode(backgroundNode)
-        
-        // 创建物体名称文本
-        let displayName = getDisplayName(for: objectName)
+        // 唯一ID
+        let objectID = objectName
+        // 优先显示自定义名称
+        let displayName = getCustomName(for: objectID) ?? getDisplayName(for: objectName)
         print("处理后的显示文本: '\(displayName)'")
         let nameText = createSafeText(displayName, size: 24)
-        
         guard let nameNode = createTextNode(from: nameText) else {
             print("错误：无法创建名称文本节点")
             return
         }
-        nameNode.position.y = 0.01 // 调整位置
+        nameNode.position.y = 0.01
         labelNode.addChildNode(nameNode)
-        
-        // 创建置信度文本
         let confidenceString = String(format: "%.1f%%", confidence * 100)
         if let confidenceNode = createConfidenceNode(confidenceString) {
-            confidenceNode.position.y = -0.01 // 调整位置
+            confidenceNode.position.y = -0.01
             labelNode.addChildNode(confidenceNode)
         }
-        
-        // 获取屏幕中心点
         let screenCenter = CGPoint(x: boundingBox.midX * sceneView.bounds.width,
                                  y: boundingBox.midY * sceneView.bounds.height)
-        
-        // 进行射线检测
         var hitTestResults = sceneView.hitTest(screenCenter, types: [.featurePoint])
         if hitTestResults.isEmpty {
             hitTestResults = sceneView.hitTest(screenCenter, types: [.estimatedHorizontalPlane])
         }
-        
         if let hitResult = hitTestResults.first {
             let position = SCNVector3(
                 hitResult.worldTransform.columns.3.x,
@@ -257,22 +246,15 @@ class ARObjectDetectionViewController: UIViewController {
                 hitResult.worldTransform.columns.3.z
             )
             labelNode.position = position
-            
-            // 添加浮动动画
             addFloatingAnimation(to: labelNode)
-            
-            // 始终面向相机
             let billboardConstraint = SCNBillboardConstraint()
             billboardConstraint.freeAxes = .Y
             labelNode.constraints = [billboardConstraint]
-            
-            // 移除旧标签
-            detectedObjectAnnotations[objectName]?.removeFromParentNode()
-            
-            // 添加新标签
+            // 设置唯一标识
+            labelNode.name = objectID
+            detectedObjectAnnotations[objectID]?.removeFromParentNode()
             sceneView.scene.rootNode.addChildNode(labelNode)
-            detectedObjectAnnotations[objectName] = labelNode
-            
+            detectedObjectAnnotations[objectID] = labelNode
             print("标签添加成功，位置: x=\(position.x), y=\(position.y), z=\(position.z)")
         } else {
             print("未能找到合适的位置放置标签")
@@ -420,6 +402,67 @@ class ARObjectDetectionViewController: UIViewController {
             SCNAction.moveBy(x: 0, y: -0.005, z: 0, duration: 1.0)
         ])
         node.runAction(SCNAction.repeatForever(floatAnimation))
+    }
+    
+    @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
+        let location = gesture.location(in: sceneView)
+        let hitResults = sceneView.hitTest(location, options: nil)
+        if let node = hitResults.first?.node {
+            if let objectID = findObjectID(for: node) {
+                promptForCustomName(objectID: objectID) { [weak self] newName in
+                    self?.saveCustomName(newName, for: objectID)
+                    self?.refreshLabel(for: objectID)
+                }
+            }
+        }
+    }
+    
+    private func findObjectID(for node: SCNNode) -> String? {
+        var current: SCNNode? = node
+        while current != nil {
+            if let name = current?.name {
+                return name
+            }
+            current = current?.parent
+        }
+        return nil
+    }
+    
+    private func promptForCustomName(objectID: String, completion: @escaping (String) -> Void) {
+        let alert = UIAlertController(title: "自定义标签", message: "请输入新名称", preferredStyle: .alert)
+        alert.addTextField { [weak self] textField in
+            textField.placeholder = "输入新名称"
+            textField.text = self?.getCustomName(for: objectID)
+        }
+        alert.addAction(UIAlertAction(title: "保存", style: .default, handler: { [weak alert] _ in
+            if let name = alert?.textFields?.first?.text {
+                completion(name)
+            }
+        }))
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+        self.present(alert, animated: true)
+    }
+    
+    private func refreshLabel(for objectID: String) {
+        if let node = detectedObjectAnnotations[objectID] {
+            node.removeFromParentNode()
+            detectedObjectAnnotations.removeValue(forKey: objectID)
+        }
+        // 重新添加标签（此处只用 objectID 作为 objectName，confidence 取 1.0，位置用默认中心）
+        let boundingBox = CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2)
+        self.addLabel(for: objectID, confidence: 1.0, at: boundingBox)
+    }
+    
+    // 新增：保存自定义名称
+    private func saveCustomName(_ name: String, for objectID: String) {
+        var customNames = UserDefaults.standard.dictionary(forKey: "CustomObjectNames") as? [String: String] ?? [:]
+        customNames[objectID] = name
+        UserDefaults.standard.set(customNames, forKey: "CustomObjectNames")
+    }
+    
+    private func getCustomName(for objectID: String) -> String? {
+        let customNames = UserDefaults.standard.dictionary(forKey: "CustomObjectNames") as? [String: String]
+        return customNames?[objectID]
     }
 }
 
