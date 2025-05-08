@@ -262,69 +262,7 @@ class ARObjectDetectionViewController: UIViewController {
     }
     
     private func getDisplayName(for identifier: String) -> String {
-        // 处理原始标识符
-        let processedName = identifier
-            .replacingOccurrences(of: "_", with: " ")
-            .replacingOccurrences(of: "-", with: " ")
-        
-        // 扩展翻译字典
-        let translations = [
-            "structure": "结构",
-            "wood": "木材",
-            "processed": "加工",
-            "wood processed": "加工木材",
-            "table": "桌子",
-            "chair": "椅子",
-            "desk": "书桌",
-            "cabinet": "柜子",
-            "shelf": "架子",
-            "door": "门",
-            "window": "窗户",
-            "floor": "地板",
-            "wall": "墙壁",
-            "ceiling": "天花板",
-            "light": "灯",
-            "lamp": "台灯",
-            "computer": "电脑",
-            "monitor": "显示器",
-            "keyboard": "键盘",
-            "mouse": "鼠标",
-            "phone": "手机",
-            "book": "书本",
-            "paper": "纸张",
-            "pen": "笔",
-            "cup": "水杯",
-            "bottle": "瓶子",
-            "glass": "玻璃杯",
-            "plate": "盘子",
-            "bowl": "碗",
-            "furniture": "家具",
-            "electronic": "电子设备",
-            "device": "设备",
-            "metal": "金属",
-            "plastic": "塑料",
-            "wooden": "木制",
-            "steel": "钢制",
-            "aluminum": "铝制"
-        ]
-        
-        // 尝试直接匹配
-        if let translation = translations[processedName.lowercased()] {
-            return translation
-        }
-        
-        // 如果是复合词，尝试翻译各个部分
-        let words = processedName.lowercased().split(separator: " ")
-        let translatedWords = words.map { word -> String in
-            if let translation = translations[String(word)] {
-                return translation
-            }
-            return String(word)
-        }
-        
-        let result = translatedWords.joined(separator: "")
-        print("翻译结果: '\(processedName)' -> '\(result)'")
-        return result
+        return identifier
     }
     
     private func createSafeText(_ string: String, size: CGFloat) -> SCNText {
