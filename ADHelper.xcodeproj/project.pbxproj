@@ -33,17 +33,31 @@
 		71F8D2092DB8C6C100330D16 /* Exceptions for "ADHelper" folder in "ADHelper" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				DETRResnet50SemanticSegmentationF16.mlpackage,
 				Info.plist,
+				Resnet50.mlmodel,
 			);
 			target = 71F8D1DD2DB8C6C000330D16 /* ADHelper */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
+		71A835202DCDE66200DD847A /* Exceptions for "ADHelper" folder in "Copy Bundle Resources" phase from "ADHelper" target */ = {
+			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
+			buildPhase = 71F8D1DC2DB8C6C000330D16 /* Resources */;
+			membershipExceptions = (
+				DETRResnet50SemanticSegmentationF16.mlpackage,
+				Resnet50.mlmodel,
+			);
+		};
+/* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		71F8D1E02DB8C6C000330D16 /* ADHelper */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				71F8D2092DB8C6C100330D16 /* Exceptions for "ADHelper" folder in "ADHelper" target */,
+				71A835202DCDE66200DD847A /* Exceptions for "ADHelper" folder in "Copy Bundle Resources" phase from "ADHelper" target */,
 			);
 			path = ADHelper;
 			sourceTree = "<group>";

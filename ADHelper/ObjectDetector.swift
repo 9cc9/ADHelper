@@ -21,20 +21,31 @@ class ObjectDetector {
     }
     
     private func setupVision() {
-        guard let modelURL = Bundle.main.url(forResource: "Resnet50", withExtension: "mlmodelc") else {
+        let modelURL = Bundle.main.url(forResource: "Resnet50", withExtension: "mlmodelc")
+        if modelURL == nil {
+            print("1.无法加载Resnet50模型")
+
+            if let resourcePath = Bundle.main.resourcePath {
+                do {
+                    let files = try FileManager.default.contentsOfDirectory(atPath: resourcePath)
+                    print("Bundle.main.resourcePath 文件列表：\n\(files.joined(separator: "\n"))")
+                } catch {
+                    print("无法获取Bundle资源文件列表: \(error)")
+                }
+            }
             setupDefaultVision()
             return
         }
         
         do {
-            let visionModel = try VNCoreMLModel(for: MLModel(contentsOf: modelURL))
+            let visionModel = try VNCoreMLModel(for: MLModel(contentsOf: modelURL!))
             let request = VNCoreMLRequest(model: visionModel) { [weak self] request, error in
                 self?.processClassification(for: request, error: error)
             }
             request.imageCropAndScaleOption = .centerCrop
             visionRequests = [request]
         } catch {
-            print("无法加载ResNet50模型: \(error)")
+            print("2.无法加载DETRResnet50SemanticSegmentationF16模型: \(error)")
             setupDefaultVision()
         }
     }
@@ -54,10 +65,11 @@ class ObjectDetector {
             return
         }
         
-        guard trackingState == .normal else {
-            print("[LOG] 相机跟踪状态异常: \(trackingState)")
-            return
-        }
+        // 临时注释掉 trackingState 判断
+        // guard trackingState == .normal else {
+        //     print("[LOG] 相机跟踪状态异常: \(trackingState)")
+        //     return
+        // }
         
         isProcessing = true
         lastProcessedTime = currentTime
@@ -70,15 +82,23 @@ class ObjectDetector {
             do {
                 try handler.perform(self?.visionRequests ?? [])
             } catch {
-                self?.delegate?.objectDetector(self!, didFailWithError: error)
+                // delegate回调放到主线程，避免UI线程警告
+                DispatchQueue.main.async {
+                    self?.delegate?.objectDetector(self!, didFailWithError: error)
+                }
             }
-            self?.isProcessing = false
+            // isProcessing 状态更新也放到主线程，避免潜在线程安全问题
+            DispatchQueue.main.async {
+                self?.isProcessing = false
+            }
         }
     }
     
     private func processClassification(for request: VNRequest, error: Error?) {
         if let error = error {
-            delegate?.objectDetector(self, didFailWithError: error)
+            DispatchQueue.main.async {
+                self.delegate?.objectDetector(self, didFailWithError: error)
+            }
             return
         }
         
@@ -99,7 +119,10 @@ class ObjectDetector {
             }
             
             let finalResults = Array(bestResults.values)
-            delegate?.objectDetector(self, didDetectObjects: finalResults)
+            // delegate回调放到主线程，避免UI线程警告
+            DispatchQueue.main.async {
+                self.delegate?.objectDetector(self, didDetectObjects: finalResults)
+            }
         }
     }
 } 

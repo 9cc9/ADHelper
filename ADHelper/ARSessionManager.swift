@@ -3,7 +3,7 @@ import SceneKit
 
 protocol ARSessionManagerDelegate: AnyObject {
     func sessionManager(_ manager: ARSessionManager, didFailWithError error: Error)
-    func sessionManager(_ manager: ARSessionManager, didUpdate frame: ARFrame)
+    func sessionManager(_ manager: ARSessionManager, didUpdatePixelBuffer pixelBuffer: CVPixelBuffer, trackingState: ARCamera.TrackingState)
     func sessionManagerWasInterrupted(_ manager: ARSessionManager)
     func sessionManagerInterruptionEnded(_ manager: ARSessionManager)
 }
@@ -85,6 +85,6 @@ extension ARSessionManager: ARSessionDelegate {
             }
         }
         lastCameraPosition = cameraPosition
-        delegate?.sessionManager(self, didUpdate: frame)
+        delegate?.sessionManager(self, didUpdatePixelBuffer: frame.capturedImage, trackingState: frame.camera.trackingState)
     }
 } 

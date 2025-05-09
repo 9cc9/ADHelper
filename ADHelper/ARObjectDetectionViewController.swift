@@ -150,8 +150,8 @@ extension ARObjectDetectionViewController: ARSessionManagerDelegate {
         present(alert, animated: true)
     }
     
-    func sessionManager(_ manager: ARSessionManager, didUpdate frame: ARFrame) {
-        objectDetector.processFrame(frame.capturedImage, trackingState: frame.camera.trackingState)
+    func sessionManager(_ manager: ARSessionManager, didUpdatePixelBuffer pixelBuffer: CVPixelBuffer, trackingState: ARCamera.TrackingState) {
+        objectDetector.processFrame(pixelBuffer, trackingState: trackingState)
     }
     
     func sessionManagerWasInterrupted(_ manager: ARSessionManager) {
@@ -187,7 +187,7 @@ extension ARObjectDetectionViewController: ARSCNViewDelegate {
         if let frame = sceneView.session.currentFrame {
             let camera = frame.camera
             if camera.trackingState != .normal {
-                print("相机跟踪状态: \(camera.trackingState)")
+//                print("相机跟踪状态: \(camera.trackingState)")
             }
         }
     }
