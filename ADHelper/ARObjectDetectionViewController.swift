@@ -1,76 +1,51 @@
 import UIKit
 import ARKit
-import Vision
 import SceneKit
-import CoreML
 
 class ARObjectDetectionViewController: UIViewController {
-    
     private var sceneView: ARSCNView!
-    private var visionRequests = [VNRequest]()
-    private var detectedObjectAnnotations: [String: SCNNode] = [:]
-    private var lastProcessedTime: TimeInterval = 0
-    private let processingInterval: TimeInterval = 0.5 // 每0.5秒处理一次
-    private var isProcessing = false
-    private var lastCameraPosition: simd_float4? = nil
-    private let minCameraMoveDistance: Float = 0.05 // 5厘米
+    private var sessionManager: ARSessionManager!
+    private var objectDetector: ObjectDetector!
+    private var labelManager: ARLabelManager!
     
     override func viewDidLoad() {
         super.viewDidLoad()
         setupAR()
-        setupVision()
+        setupManagers()
         setupUI()
+    }
+    
+    private func setupAR() {
+        sceneView = ARSCNView(frame: view.bounds)
+        sceneView.delegate = self
+        sceneView.autoenablesDefaultLighting = true
+        view.addSubview(sceneView)
+        
+        let scene = SCNScene()
+        sceneView.scene = scene
+        
+        #if DEBUG
+        sceneView.debugOptions = [.showFeaturePoints, .showWorldOrigin]
+        #endif
+        
+        sceneView.automaticallyUpdatesLighting = true
+        sceneView.antialiasingMode = .multisampling4X
+    }
+    
+    private func setupManagers() {
+        sessionManager = ARSessionManager(sceneView: sceneView)
+        sessionManager.delegate = self
+        
+        objectDetector = ObjectDetector()
+        objectDetector.delegate = self
+        
+        labelManager = ARLabelManager(sceneView: sceneView)
+        
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         sceneView.addGestureRecognizer(tapGesture)
     }
     
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        resetTracking()
-    }
-    
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-        sceneView.session.pause()
-    }
-    
-    private func resetTracking() {
-        // 配置AR会话
-        guard ARWorldTrackingConfiguration.isSupported else {
-            print("设备不支持 AR 世界追踪")
-            return
-        }
-        
-        let configuration = ARWorldTrackingConfiguration()
-        
-        // 设置平面检测
-        configuration.planeDetection = [.horizontal, .vertical]
-        
-        // 配置视频格式
-        let availableFormats = ARWorldTrackingConfiguration.supportedVideoFormats
-        if let bestFormat = availableFormats.first(where: { format in
-            // 选择适中的分辨率
-            let resolution = format.imageResolution
-            return resolution.width <= 1920
-        }) ?? availableFormats.first {
-            configuration.videoFormat = bestFormat
-            print("已选择视频格式: \(bestFormat.imageResolution.width)x\(bestFormat.imageResolution.height)")
-        }
-        
-        // 启用自动光照估计
-        configuration.isLightEstimationEnabled = true
-        
-        // 启用自动对焦
-        configuration.isAutoFocusEnabled = true
-        
-        // 重置会话并应用新配置
-        sceneView.session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
-        
-        print("AR会话已重置并应用新配置")
-    }
-    
     private func setupUI() {
-        // 添加关闭按钮
         let closeButton = UIButton(type: .system)
         closeButton.setTitle("关闭", for: .normal)
         closeButton.setTitleColor(.white, for: .normal)
@@ -89,269 +64,27 @@ class ARObjectDetectionViewController: UIViewController {
         ])
     }
     
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        sessionManager.resetTracking()
+    }
+    
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        sessionManager.pauseSession()
+    }
+    
     @objc private func closeTapped() {
         dismiss(animated: true)
-    }
-    
-    private func setupAR() {
-        // 设置AR场景视图
-        sceneView = ARSCNView(frame: view.bounds)
-        sceneView.delegate = self
-        sceneView.session.delegate = self
-        sceneView.autoenablesDefaultLighting = true
-        view.addSubview(sceneView)
-        
-        // 配置场景
-        let scene = SCNScene()
-        sceneView.scene = scene
-        
-        // 添加调试选项
-        #if DEBUG
-        sceneView.debugOptions = [.showFeaturePoints, .showWorldOrigin]
-        #endif
-        
-        // 设置场景视图的其他属性
-        sceneView.automaticallyUpdatesLighting = true
-        sceneView.antialiasingMode = .multisampling4X
-    }
-    
-    private func setupVision() {
-        guard let modelURL = Bundle.main.url(forResource: "Resnet50", withExtension: "mlmodelc") else {
-            // 如果找不到模型文件，使用系统内置的图像分类模型
-            setupDefaultVision()
-            return
-        }
-        
-        do {
-            let visionModel = try VNCoreMLModel(for: MLModel(contentsOf: modelURL))
-            let request = VNCoreMLRequest(model: visionModel) { [weak self] request, error in
-                self?.processClassification(for: request, error: error)
-            }
-            request.imageCropAndScaleOption = .centerCrop
-            visionRequests = [request]
-        } catch {
-            print("无法加载ResNet50模型: \(error)")
-            // 如果加载失败，使用系统内置的图像分类模型
-            setupDefaultVision()
-        }
-    }
-    
-    private func setupDefaultVision() {
-        if let request = try? VNClassifyImageRequest(completionHandler: { [weak self] request, error in
-            self?.processClassification(for: request, error: error)
-        }) {
-            visionRequests = [request]
-        }
-    }
-    
-    private func processClassification(for request: VNRequest, error: Error?) {
-        DispatchQueue.main.async {
-            if let error = error {
-                print("识别错误: \(error)")
-                return
-            }
-            
-            print("开始处理识别结果...")
-            
-            if let results = request.results as? [VNClassificationObservation] {
-                print("获取到 \(results.count) 个识别结果")
-                
-                // 只打印置信度大于等于50%的结果
-                results.filter { $0.confidence >= 0.5 }.forEach { result in
-                    print("识别到物体: \(result.identifier), 置信度: \(String(format: "%.2f%%", result.confidence * 100))")
-                }
-                
-                // 只处理置信度大于50%的结果
-                let highConfidenceResults = results.filter { $0.confidence > 0.5 }
-                print("置信度大于50%的结果数量: \(highConfidenceResults.count)")
-
-                // 针对同一物体，只保留置信度最高的结果
-                var bestResults: [String: VNClassificationObservation] = [:]
-                for result in highConfidenceResults {
-                    let key = result.identifier
-                    if let existing = bestResults[key] {
-                        if result.confidence > existing.confidence {
-                            bestResults[key] = result
-                        }
-                    } else {
-                        bestResults[key] = result
-                    }
-                }
-                let finalResults = Array(bestResults.values)
-                print("最终用于展示的唯一物体数量: \(finalResults.count)")
-                
-                // 清除所有现有标签
-                self.detectedObjectAnnotations.values.forEach { $0.removeFromParentNode() }
-                self.detectedObjectAnnotations.removeAll()
-                
-                // 为每个唯一物体添加标签
-                for (index, result) in finalResults.enumerated() {
-                    let chineseLabel = result.identifier
-                    print("处理识别结果 \(index + 1): \(chineseLabel)")
-                    
-                    // 计算标签位置
-                    let yOffset = CGFloat(index) * 0.1
-                    let boundingBox = CGRect(x: 0.4, y: 0.4 + yOffset, width: 0.2, height: 0.2)
-                    
-                    self.addLabel(for: chineseLabel,
-                                confidence: result.confidence,
-                                at: boundingBox)
-                }
-            } else {
-                print("未获取到有效的识别结果")
-            }
-        }
-    }
-    
-    private func addLabel(for objectName: String, confidence: Float, at boundingBox: CGRect) {
-        print("addLabel: objectName = '\(objectName)'，confidence = \(confidence)")
-        guard !objectName.isEmpty else {
-            print("错误：物体名称为空")
-            return
-        }
-        let labelNode = SCNNode()
-        let backgroundGeometry = SCNPlane(width: 0.12, height: 0.06)
-        let backgroundMaterial = SCNMaterial()
-        backgroundMaterial.diffuse.contents = UIColor.black.withAlphaComponent(0.7)
-        backgroundGeometry.materials = [backgroundMaterial]
-        let backgroundNode = SCNNode(geometry: backgroundGeometry)
-        labelNode.addChildNode(backgroundNode)
-        // 唯一ID
-        let objectID = objectName
-        // 优先显示自定义名称
-        let displayName = getCustomName(for: objectID) ?? getDisplayName(for: objectName)
-        print("处理后的显示文本: '\(displayName)'")
-        let nameText = createSafeText(displayName, size: 24)
-        guard let nameNode = createTextNode(from: nameText) else {
-            print("错误：无法创建名称文本节点")
-            return
-        }
-        nameNode.position.y = 0.01
-        labelNode.addChildNode(nameNode)
-        let confidenceString = String(format: "%.1f%%", confidence * 100)
-        if let confidenceNode = createConfidenceNode(confidenceString) {
-            confidenceNode.position.y = -0.01
-            labelNode.addChildNode(confidenceNode)
-        }
-        let screenCenter = CGPoint(x: boundingBox.midX * sceneView.bounds.width,
-                                 y: boundingBox.midY * sceneView.bounds.height)
-        var hitTestResults = sceneView.hitTest(screenCenter, types: [.featurePoint])
-        if hitTestResults.isEmpty {
-            hitTestResults = sceneView.hitTest(screenCenter, types: [.estimatedHorizontalPlane])
-        }
-        if let hitResult = hitTestResults.first {
-            let position = SCNVector3(
-                hitResult.worldTransform.columns.3.x,
-                hitResult.worldTransform.columns.3.y + 0.05,
-                hitResult.worldTransform.columns.3.z
-            )
-            labelNode.position = position
-            addFloatingAnimation(to: labelNode)
-            let billboardConstraint = SCNBillboardConstraint()
-            billboardConstraint.freeAxes = .Y
-            labelNode.constraints = [billboardConstraint]
-            // 设置唯一标识
-            labelNode.name = objectID
-            detectedObjectAnnotations[objectID]?.removeFromParentNode()
-            sceneView.scene.rootNode.addChildNode(labelNode)
-            detectedObjectAnnotations[objectID] = labelNode
-            print("标签添加成功，位置: x=\(position.x), y=\(position.y), z=\(position.z)")
-        } else {
-            print("未能找到合适的位置放置标签")
-        }
-    }
-    
-    private func getDisplayName(for identifier: String) -> String {
-        return identifier
-    }
-    
-    private func createSafeText(_ string: String, size: CGFloat) -> SCNText {
-        let safeString = string.trimmingCharacters(in: .whitespacesAndNewlines)
-        let displayString = safeString.isEmpty ? "未知物体" : safeString
-        
-        // 创建2D文本来预计算尺寸
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: UIFont.systemFont(ofSize: size, weight: .medium)
-        ]
-        let textSize = (displayString as NSString).size(withAttributes: attributes)
-        
-        // 创建文本几何体
-        let text = SCNText(string: displayString, extrusionDepth: 0.01)
-        
-        // 设置字体
-        text.font = UIFont.systemFont(ofSize: size, weight: .medium)
-        
-        // 设置文本属性
-        text.flatness = 0.2
-        text.chamferRadius = 0.0
-        
-        // 确保文本有合适的容器大小
-        text.containerFrame = CGRect(x: 0, y: 0, width: max(textSize.width, 1), height: max(textSize.height, 1))
-        
-        // 设置材质
-        let material = SCNMaterial()
-        material.diffuse.contents = UIColor.white
-        material.isDoubleSided = true
-        text.materials = [material]
-        
-        return text
-    }
-    
-    private func createTextNode(from text: SCNText) -> SCNNode? {
-        let textNode = SCNNode(geometry: text)
-        
-        // 使用文本的容器框架计算尺寸
-        let width = CGFloat(text.containerFrame.width)
-        let height = CGFloat(text.containerFrame.height)
-        
-        // 验证尺寸
-        guard width > 0, height > 0 else {
-            print("错误：文本尺寸无效 - 宽度: \(width), 高度: \(height)")
-            return nil
-        }
-        
-        // 调整位置和缩放
-        let scale: Float = 0.0003
-        textNode.scale = SCNVector3(scale, scale, scale)
-        textNode.position = SCNVector3(-Float(width) * scale / 2, 0, 0.001)
-        
-        return textNode
-    }
-    
-    private func createConfidenceNode(_ confidenceString: String) -> SCNNode? {
-        let confidenceText = createSafeText(confidenceString, size: 40) // 增大字体大小
-        let material = SCNMaterial()
-        material.diffuse.contents = UIColor.lightGray
-        material.isDoubleSided = true
-        confidenceText.materials = [material]
-        
-        guard let confidenceNode = createTextNode(from: confidenceText) else {
-            print("错误：无法创建置信度节点")
-            return nil
-        }
-        
-        confidenceNode.position.y = -0.02
-        return confidenceNode
-    }
-    
-    private func addFloatingAnimation(to node: SCNNode) {
-        let floatAnimation = SCNAction.sequence([
-            SCNAction.moveBy(x: 0, y: 0.005, z: 0, duration: 1.0),
-            SCNAction.moveBy(x: 0, y: -0.005, z: 0, duration: 1.0)
-        ])
-        node.runAction(SCNAction.repeatForever(floatAnimation))
     }
     
     @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
         let location = gesture.location(in: sceneView)
         let hitResults = sceneView.hitTest(location, options: nil)
-        if let node = hitResults.first?.node {
-            if let objectID = findObjectID(for: node) {
-                promptForCustomName(objectID: objectID) { [weak self] newName in
-                    self?.saveCustomName(newName, for: objectID)
-                    self?.refreshLabel(for: objectID)
-                }
-            }
+        
+        if let node = hitResults.first?.node,
+           let objectID = findObjectID(for: node) {
+            promptForCustomName(objectID: objectID)
         }
     }
     
@@ -366,49 +99,27 @@ class ARObjectDetectionViewController: UIViewController {
         return nil
     }
     
-    private func promptForCustomName(objectID: String, completion: @escaping (String) -> Void) {
+    private func promptForCustomName(objectID: String) {
         let alert = UIAlertController(title: "自定义标签", message: "请输入新名称", preferredStyle: .alert)
         alert.addTextField { [weak self] textField in
             textField.placeholder = "输入新名称"
-            textField.text = self?.getCustomName(for: objectID)
+            textField.text = self?.labelManager.getCustomName(for: objectID)
         }
-        alert.addAction(UIAlertAction(title: "保存", style: .default, handler: { [weak alert] _ in
-            if let name = alert?.textFields?.first?.text {
-                completion(name)
+        
+        alert.addAction(UIAlertAction(title: "保存", style: .default) { [weak self] _ in
+            if let name = alert.textFields?.first?.text {
+                self?.labelManager.saveCustomName(name, for: objectID)
+                self?.labelManager.refreshLabel(for: objectID)
             }
-        }))
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-        self.present(alert, animated: true)
-    }
-    
-    private func refreshLabel(for objectID: String) {
-        if let node = detectedObjectAnnotations[objectID] {
-            node.removeFromParentNode()
-            detectedObjectAnnotations.removeValue(forKey: objectID)
-        }
-        // 重新添加标签（此处只用 objectID 作为 objectName，confidence 取 1.0，位置用默认中心）
-        let boundingBox = CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2)
-        self.addLabel(for: objectID, confidence: 1.0, at: boundingBox)
-    }
-    
-    // 新增：保存自定义名称
-    private func saveCustomName(_ name: String, for objectID: String) {
-        var customNames = UserDefaults.standard.dictionary(forKey: "CustomObjectNames") as? [String: String] ?? [:]
-        customNames[objectID] = name
-        UserDefaults.standard.set(customNames, forKey: "CustomObjectNames")
-    }
-    
-    private func getCustomName(for objectID: String) -> String? {
-        let customNames = UserDefaults.standard.dictionary(forKey: "CustomObjectNames") as? [String: String]
-        return customNames?[objectID]
+        })
+        
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        present(alert, animated: true)
     }
 }
 
-// MARK: - ARSessionDelegate
-extension ARObjectDetectionViewController: ARSessionDelegate {
-    func session(_ session: ARSession, didFailWithError error: Error) {
-        print("AR会话错误: \(error.localizedDescription)")
-        
+extension ARObjectDetectionViewController: ARSessionManagerDelegate {
+    func sessionManager(_ manager: ARSessionManager, didFailWithError error: Error) {
         guard let arError = error as? ARError else { return }
         
         let errorMessage: String
@@ -425,100 +136,59 @@ extension ARObjectDetectionViewController: ARSessionDelegate {
             errorMessage = "出现未知错误: \(error.localizedDescription)"
         }
         
-        print("AR错误详情: \(errorMessage)")
-        
-        // 显示错误提示
-        DispatchQueue.main.async {
-            let alert = UIAlertController(
-                title: "AR会话错误",
-                message: errorMessage,
-                preferredStyle: .alert
-            )
-            alert.addAction(UIAlertAction(title: "重试", style: .default) { [weak self] _ in
-                self?.resetTracking()
-            })
-            alert.addAction(UIAlertAction(title: "关闭", style: .cancel) { [weak self] _ in
-                self?.dismiss(animated: true)
-            })
-            self.present(alert, animated: true)
-        }
+        let alert = UIAlertController(
+            title: "AR会话错误",
+            message: errorMessage,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "重试", style: .default) { [weak self] _ in
+            self?.sessionManager.resetTracking()
+        })
+        alert.addAction(UIAlertAction(title: "关闭", style: .cancel) { [weak self] _ in
+            self?.dismiss(animated: true)
+        })
+        present(alert, animated: true)
     }
     
-    func sessionWasInterrupted(_ session: ARSession) {
+    func sessionManager(_ manager: ARSessionManager, didUpdate frame: ARFrame) {
+        objectDetector.processFrame(frame.capturedImage, trackingState: frame.camera.trackingState)
+    }
+    
+    func sessionManagerWasInterrupted(_ manager: ARSessionManager) {
         print("AR会话被中断")
     }
     
-    func sessionInterruptionEnded(_ session: ARSession) {
+    func sessionManagerInterruptionEnded(_ manager: ARSessionManager) {
         print("AR会话中断结束，重置跟踪")
-        resetTracking()
-    }
-    
-    func session(_ session: ARSession, didUpdate frame: ARFrame) {
-        let currentTime = CACurrentMediaTime()
-        // print("[LOG] didUpdate frame, time: \(currentTime)")
-        // 检查相机移动距离
-        let cameraPosition = frame.camera.transform.columns.3
-        if let last = lastCameraPosition {
-            let dx = cameraPosition.x - last.x
-            let dy = cameraPosition.y - last.y
-            let dz = cameraPosition.z - last.z
-            let distance = sqrt(dx*dx + dy*dy + dz*dz)
-            if distance < minCameraMoveDistance {
-                // print("[LOG] 相机移动距离 \(distance)，小于阈值 \(minCameraMoveDistance)，跳过标签刷新")
-                return
-            }
-        }
-        lastCameraPosition = cameraPosition
-        // 避免重复处理和过于频繁的处理
-        guard !isProcessing && currentTime - lastProcessedTime > processingInterval else {
-            print("[LOG] 跳过本帧处理 isProcessing=\(isProcessing)")
-            return
-        }
-        isProcessing = true
-        lastProcessedTime = currentTime
-        let pixelBuffer = frame.capturedImage
-        // 确保图像质量
-        guard frame.camera.trackingState == .normal else {
-            print("[LOG] 相机跟踪状态异常: \(frame.camera.trackingState)")
-            isProcessing = false
-            return
-        }
-        print("[LOG] 开始Vision识别请求")
-        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer,
-                                          orientation: .up,
-                                          options: [:])
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            do {
-                try handler.perform(self?.visionRequests ?? [])
-            } catch {
-                print("[ERROR] 图像处理错误: \(error)")
-            }
-            self?.isProcessing = false
-        }
+        sessionManager.resetTracking()
     }
 }
 
-// MARK: - ARSCNViewDelegate
-extension ARObjectDetectionViewController: ARSCNViewDelegate {
-    func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
-        DispatchQueue.main.async { [weak self] in
-            // 更新UI元素
-            guard let self = self else { return }
-            
-            if let frame = self.sceneView.session.currentFrame {
-                let camera = frame.camera
-                if camera.trackingState != .normal {
-                    print("相机跟踪状态: \(camera.trackingState)")
-                }
-            }
+extension ARObjectDetectionViewController: ObjectDetectorDelegate {
+    func objectDetector(_ detector: ObjectDetector, didDetectObjects results: [VNClassificationObservation]) {
+        labelManager.clearAllLabels()
+        
+        for (index, result) in results.enumerated() {
+            let yOffset = CGFloat(index) * 0.1
+            let boundingBox = CGRect(x: 0.4, y: 0.4 + yOffset, width: 0.2, height: 0.2)
+            labelManager.addLabel(for: result.identifier,
+                                confidence: result.confidence,
+                                at: boundingBox)
         }
     }
     
-    func renderer(_ renderer: SCNSceneRenderer, didAdd node: SCNNode, for anchor: ARAnchor) {
-        print("添加新锚点: \(type(of: anchor))")
+    func objectDetector(_ detector: ObjectDetector, didFailWithError error: Error) {
+        print("物体识别错误: \(error)")
     }
-    
-    func renderer(_ renderer: SCNSceneRenderer, didUpdate node: SCNNode, for anchor: ARAnchor) {
-        // 处理锚点更新
+}
+
+extension ARObjectDetectionViewController: ARSCNViewDelegate {
+    func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
+        if let frame = sceneView.session.currentFrame {
+            let camera = frame.camera
+            if camera.trackingState != .normal {
+                print("相机跟踪状态: \(camera.trackingState)")
+            }
+        }
     }
 } 
