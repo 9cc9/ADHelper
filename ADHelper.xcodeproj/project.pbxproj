@@ -34,6 +34,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				DETRResnet50SemanticSegmentationF16.mlpackage,
+				Inceptionv3.mlmodel,
 				Info.plist,
 				Resnet50.mlmodel,
 			);
@@ -47,6 +48,7 @@
 			buildPhase = 71F8D1DC2DB8C6C000330D16 /* Resources */;
 			membershipExceptions = (
 				DETRResnet50SemanticSegmentationF16.mlpackage,
+				Inceptionv3.mlmodel,
 				Resnet50.mlmodel,
 			);
 		};

@@ -21,7 +21,7 @@ class ObjectDetector {
     }
     
     private func setupVision() {
-        let modelURL = Bundle.main.url(forResource: "Resnet50", withExtension: "mlmodelc")
+        let modelURL = Bundle.main.url(forResource: "Inceptionv3", withExtension: "mlmodelc")
         if modelURL == nil {
             print("1.无法加载Resnet50模型")
 
@@ -103,7 +103,7 @@ class ObjectDetector {
         }
         
         if let results = request.results as? [VNClassificationObservation] {
-            let highConfidenceResults = results.filter { $0.confidence > 0.5 }
+            let highConfidenceResults = results.filter { $0.confidence > 0.3 }
             
             // 针对同一物体，只保留置信度最高的结果
             var bestResults: [String: VNClassificationObservation] = [:]
